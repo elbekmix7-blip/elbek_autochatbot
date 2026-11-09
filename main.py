@@ -4,31 +4,7 @@
 ╔══════════════════════════════════════════════════════════════════════╗
 ║   SMART CHAT AUTOMATION & MANAGEMENT SYSTEM                          ║
 ║   Userbot (24/7 avto-javob) + Shaxsiy Assistant Bot (Inline panel)   ║
-║   Hugging Face Spaces (Docker) uchun moslangan versiya              ║
 ╚══════════════════════════════════════════════════════════════════════╝
-
-HUGGING FACE SPACES (Docker) SOZLASH
-────────────────────────────────────
-Space → Settings → "Variables and secrets" bo'limida quyidagi SECRET'larni
-qo'shing:
-
-    TG_API_ID        — my.telegram.org dan olingan api_id
-    TG_API_HASH      — my.telegram.org dan olingan api_hash
-    TG_BOT_TOKEN     — @BotFather'dan olingan assistant bot tokeni
-    STRING_SESSION   — gen_session.py orqali olingan Pyrogram string session
-
-Ixtiyoriy:
-    PORT             — veb-server porti (standart: 7860)
-    STATE_PATH       — state.json yo'li (doimiy xotira /data ulangan bo'lsa:
-                       /data/state.json)
-
-String session olish (o'z kompyuteringizda, bir marta):
-    pip install -U pyrogram tgcrypto
-    python gen_session.py
-
-Lokal ishga tushirish (ixtiyoriy):
-    pip install -U pyrogram tgcrypto flask
-    python main.py
 """
 from __future__ import annotations
 
@@ -55,16 +31,10 @@ from urllib.parse import urlparse
 if sys.version_info < (3, 10):
     sys.exit("❌ Python 3.10 yoki yuqori versiya talab qilinadi.")
 
-# ──────────────────────────────────────────────────────────────────────
-#  EVENT LOOP: Pyrogram import qilinishidan OLDIN yagona loop yaratamiz.
-#  Shu tufayli "no current event loop" / "attached to a different loop"
-#  turidagi ziddiyatlar umuman bo'lmaydi.
-# ──────────────────────────────────────────────────────────────────────
-try:  # ixtiyoriy tezlashtirgich (Linux/macOS)
+try:
     import uvloop  # type: ignore
-
     uvloop.install()
-except Exception:  # pragma: no cover
+except Exception:
     pass
 
 LOOP = asyncio.new_event_loop()
@@ -83,17 +53,14 @@ try:
         InlineKeyboardMarkup,
         Message,
     )
-except ImportError:  # pragma: no cover
+except ImportError:
     sys.exit("❌ Pyrogram o'rnatilmagan. Buyruq: pip install -U pyrogram tgcrypto")
 
 try:
     from flask import Flask, jsonify
-except ImportError:  # pragma: no cover
+except ImportError:
     sys.exit("❌ Flask o'rnatilmagan. Buyruq: pip install -U flask")
 
-# ══════════════════════════════════════════════════════════════════════
-#  KONSTANTALAR
-# ══════════════════════════════════════════════════════════════════════
 BASE_DIR = Path(__file__).resolve().parent
 STATE_FILE = Path(os.getenv("STATE_PATH") or (BASE_DIR / "state.json"))
 LOG_FILE = BASE_DIR / "smartchat.log"
@@ -115,7 +82,7 @@ SECOND_REPLY = (
     "https://t.me/EduMindUz_bot"
 )
 
-SYSTEM_USER_IDS = {777000, 42777, 1087968824}  # Telegram xizmat akkauntlari
+SYSTEM_USER_IDS = {777000, 42777, 1087968824}
 
 MODES: dict[str, tuple[str, str, str]] = {
     "selective": ("🎯", "TANLANGANLAR", "faqat /add bilan qo‘shilgan odamlarga javob beradi"),
@@ -183,7 +150,7 @@ DOMAINISH_RE = re.compile(r"(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b")
 
 DEFAULT_STATE: dict[str, Any] = {
     "credentials": {"api_id": 0, "api_hash": "", "bot_token": ""},
-    "owner_id": 0,
+    "owner_id": 6841567673,
     "enabled": True,
     "mode": "selective",
     "away": False,
@@ -216,9 +183,6 @@ COOLDOWN_PRESETS = [10, 20, 30, 60, 120, 300, 900, 1800, 3600, 21600]
 PROTECT_PRESETS = [120, 300, 600, 1800, 3600, 10800]
 MAX_STEPS = 6
 
-# ══════════════════════════════════════════════════════════════════════
-#  LOGGING
-# ══════════════════════════════════════════════════════════════════════
 log = logging.getLogger("smartchat")
 
 
@@ -235,17 +199,12 @@ def setup_logging() -> None:
         )
         fileh.setFormatter(fmt)
         log.addHandler(fileh)
-    except OSError as exc:  # fayl tizimi faqat o'qish uchun bo'lsa ham ishlayversin
+    except OSError as exc:
         print(f"⚠️ Log fayli ochilmadi ({exc}); faqat konsolga yoziladi.")
     logging.getLogger("pyrogram").setLevel(logging.WARNING)
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  VEB-SERVER (Hugging Face Spaces uchun keep-alive)
-#  HF Docker Space 7860 portda javob beruvchi server kutadi. Shu server
-#  bo'lmasa, Space "Runtime error / starting" holatida qoladi.
-# ══════════════════════════════════════════════════════════════════════
 web_app = Flask(__name__)
 
 
@@ -273,12 +232,11 @@ def web_health():
 def _run_web() -> None:
     try:
         web_app.run(host="0.0.0.0", port=WEB_PORT, threaded=True, use_reloader=False)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         print(f"❌ Veb-server xatosi: {exc!r}")
 
 
 def _self_ping() -> None:
-    """Space o'z manziliga vaqti-vaqti bilan so'rov yuboradi (SPACE_HOST bo'lsa)."""
     host = (os.getenv("SPACE_HOST") or "").strip()
     url = f"https://{host}/health" if host else f"http://127.0.0.1:{WEB_PORT}/health"
     while True:
@@ -287,19 +245,15 @@ def _self_ping() -> None:
             with urllib.request.urlopen(url, timeout=15) as resp:
                 resp.read(64)
         except Exception:
-            pass  # tarmoq vaqtincha uzilsa — muhim emas
+            pass
 
 
 def keep_alive() -> None:
-    """Flask serverini fon oqimida ishga tushiradi (Pyrogram'ni bloklamaydi)."""
     threading.Thread(target=_run_web, name="web-server", daemon=True).start()
     threading.Thread(target=_self_ping, name="self-ping", daemon=True).start()
     print(f"🌐 Veb-server 0.0.0.0:{WEB_PORT} da ishga tushdi (keep_alive).")
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  YORDAMCHI FUNKSIYALAR
-# ══════════════════════════════════════════════════════════════════════
 def esc(value: Any) -> str:
     return html.escape(str(value), quote=False)
 
@@ -365,8 +319,6 @@ def ts_fmt(ts: float) -> str:
 
 
 class InstanceLock:
-    """Bir vaqtda ikkita nusxa bir session'ni buzib qo'ymasligi uchun."""
-
     def __init__(self, path: Path) -> None:
         self.path = path
 
@@ -387,9 +339,6 @@ class InstanceLock:
             self.path.unlink()
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  STATE (state.json) — atomik yozish, buzilishdan himoya
-# ══════════════════════════════════════════════════════════════════════
 class StateStore:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -480,11 +429,6 @@ class StateStore:
 
 
 def ensure_credentials(store: StateStore) -> dict[str, Any]:
-    """
-    api_id / api_hash / bot_token / STRING_SESSION ni muhit o'zgaruvchilaridan
-    (HF Secrets) oladi. Muhit orqali berilgan qiymatlar diskka yozilmaydi.
-    Terminal (TTY) bo'lsa va qiymat yetishmasa — interaktiv so'raydi.
-    """
     creds = store.d["credentials"]
     env_api_id = (os.getenv("TG_API_ID") or "").strip()
     env_api_hash = (os.getenv("TG_API_HASH") or "").strip()
@@ -507,39 +451,32 @@ def ensure_credentials(store: StateStore) -> dict[str, Any]:
 
     if missing and not interactive:
         sys.exit(
-            "❌ Quyidagi muhit o'zgaruvchilari (Secrets) topilmadi: "
+            "❌ Quyidagi muhit o'zgaruvchilari topilmadi: "
             + ", ".join(missing)
-            + "\n   Hugging Face: Space → Settings → Variables and secrets."
         )
 
     changed = False
     if missing:
-        print("\n🔐 Birinchi sozlash (my.telegram.org va @BotFather)\n")
+        print("\n🔐 Birinchi sozlash\n")
     while not api_id:
         raw = input("API_ID: ").strip()
         if raw.isdigit():
             api_id, changed = int(raw), True
     while not api_hash:
-        api_hash, changed = getpass.getpass("API_HASH (yashirin kiritiladi): ").strip(), True
+        api_hash, changed = getpass.getpass("API_HASH: ").strip(), True
     while not re.fullmatch(r"\d{5,}:[\w-]{20,}", token or ""):
         if not interactive:
             sys.exit("❌ TG_BOT_TOKEN formati noto'g'ri.")
-        token, changed = getpass.getpass("BOT_TOKEN (yashirin kiritiladi): ").strip(), True
+        token, changed = getpass.getpass("BOT_TOKEN: ").strip(), True
 
     if not session_string:
-        sys.exit(
-            "❌ STRING_SESSION topilmadi.\n"
-            "   gen_session.py yordamida string session oling va uni Space Secrets'ga "
-            "STRING_SESSION nomi bilan qo'shing."
-        )
+        sys.exit("❌ STRING_SESSION topilmadi.")
 
     result = {
         "api_id": int(api_id),
         "api_hash": str(api_hash),
         "bot_token": str(token),
     }
-    # Faqat qo'lda (interaktiv) kiritilgan qiymatlar diskka saqlanadi.
-    # Secrets orqali berilganlari state.json ga YOZILMAYDI.
     if changed and not (env_api_id and env_api_hash and env_token):
         store.d["credentials"] = result
         store.save_sync()
@@ -547,9 +484,6 @@ def ensure_credentials(store: StateStore) -> dict[str, Any]:
     return result
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  ASOSIY TIZIM
-# ══════════════════════════════════════════════════════════════════════
 HELP_TEXT = (
     "📖 <b>BUYRUQLAR</b>\n"
     "━━━━━━━━━━━━━━━\n"
@@ -577,7 +511,7 @@ class SmartChatSystem:
         self.bot: Client = None  # type: ignore[assignment]
         self.me = None
         self.bot_me = None
-        self.owner_id = 0
+        self.owner_id = 6841567673  # Ziyodullayev Elbek ID raqami oldindan belgilanadi
         self.started = time.time()
 
         self.tasks: set[asyncio.Task] = set()
@@ -605,7 +539,6 @@ class SmartChatSystem:
             "cancel": self.cmd_cancel,
         }
 
-    # ── qisqa kirish nuqtalari ────────────────────────────────────────
     @property
     def d(self) -> dict[str, Any]:
         return self.store.d
@@ -628,7 +561,6 @@ class SmartChatSystem:
             log.error("Fon vazifasi xatosi [%s]: %r", task.get_name(), exc, exc_info=exc)
 
     async def tg(self, func, *args, retries: int = 3, **kwargs):
-        """Telegram chaqiruvi: FloodWait'ga chidamli o'ram."""
         for _ in range(retries):
             try:
                 return await func(*args, **kwargs)
@@ -638,12 +570,7 @@ class SmartChatSystem:
                 await asyncio.sleep(wait + 1)
         raise RuntimeError("FloodWait: urinishlar tugadi")
 
-    # ══════════════════════════════════════════════════════════════════
-    #  ISHGA TUSHIRISH / TO'XTATISH
-    # ══════════════════════════════════════════════════════════════════
     async def run(self) -> None:
-        # Userbot: lokal "userbot.session" fayli o'rniga STRING_SESSION ishlatiladi.
-        # in_memory=True — hech qanday session fayli diskka yozilmaydi.
         self.userbot = Client(
             "userbot",
             api_id=self.creds["api_id"],
@@ -652,7 +579,6 @@ class SmartChatSystem:
             in_memory=True,
             sleep_threshold=60,
         )
-        # Assistant bot ham xotirada ishlaydi (token orqali har safar qayta kiradi).
         self.bot = Client(
             "assistant",
             api_id=self.creds["api_id"],
@@ -682,8 +608,6 @@ class SmartChatSystem:
 
         log.info("✅ Userbot: %s (id=%s)", display_name(self.me), self.me.id)
         log.info("✅ Assistant bot: @%s", self.bot_me.username)
-        print(f"\n🤖 Tizim ishga tushdi. Assistant botingiz: https://t.me/{self.bot_me.username}\n"
-              f"   Botga kirib /start ni bosing.  (To‘xtatish: Ctrl+C)\n")
 
         self.spawn(self.store.autosave_loop(), "autosave")
         self.spawn(self.housekeeping_loop(), "housekeeping")
@@ -726,9 +650,8 @@ class SmartChatSystem:
                 reply_markup=markup, parse_mode=ParseMode.HTML,
             )
         except Exception as exc:
-            log.warning("Egasiga salom yuborilmadi (botda /start bosmagan bo‘lishingiz mumkin): %s", exc)
+            log.warning("Egasiga salom yuborilmadi: %s", exc)
 
-    # ── handlerlarni ro'yxatdan o'tkazish ─────────────────────────────
     def _register_handlers(self) -> None:
         ub, bt = self.userbot, self.bot
         ub.add_handler(RawUpdateHandler(self.on_raw), group=-10)
@@ -761,15 +684,15 @@ class SmartChatSystem:
 
     async def _owner_check(self, _flt, _client, update) -> bool:
         user = getattr(update, "from_user", None)
-        return bool(user and self.owner_id and user.id == self.owner_id)
+        if not user:
+            return False
+        # Elbekning aniq ID raqami (6841567673) yoki owner_id tekshiriladi
+        return user.id == 6841567673 or (self.owner_id and user.id == self.owner_id)
 
     async def on_stranger(self, _client, message: Message) -> None:
         user = message.from_user
         log.info("Begona foydalanuvchi assistant botga yozdi: %s", getattr(user, "id", "?"))
 
-    # ══════════════════════════════════════════════════════════════════
-    #  FON VAZIFALARI
-    # ══════════════════════════════════════════════════════════════════
     async def housekeeping_loop(self) -> None:
         while True:
             await asyncio.sleep(60)
@@ -811,17 +734,13 @@ class SmartChatSystem:
             try:
                 await self.userbot.get_me()
             except fatal as exc:
-                log.critical("Session yaroqsiz (%r). Yangi STRING_SESSION oling.", exc)
+                log.critical("Session yaroqsiz (%r).", exc)
                 self.fatal_event.set()
                 return
             except Exception as exc:
-                log.warning("Watchdog: ulanish muammosi (%r) — Pyrogram qayta ulanadi", exc)
+                log.warning("Watchdog: ulanish muammosi (%r)", exc)
 
-    # ══════════════════════════════════════════════════════════════════
-    #  FAOL SUHBAT HIMOYASI
-    # ══════════════════════════════════════════════════════════════════
     async def on_raw(self, _client, update, _users, _chats) -> None:
-        """Egasi suhbatni o'qigan paytni ushlaydi (boshqa qurilmadan ham)."""
         if isinstance(update, raw_types.UpdateReadHistoryInbox):
             peer = update.peer
             if isinstance(peer, raw_types.PeerUser):
@@ -837,7 +756,7 @@ class SmartChatSystem:
             return
         msg_id = getattr(message, "id", None) or getattr(message, "message_id", None)
         if self.inflight.get(chat.id, 0) > 0 or (chat.id, msg_id) in self.own_ids:
-            return  # bu bizning avto-javobimiz
+            return
         now = time.time()
         self.owner_activity[chat.id] = now
         rec = self.store.user_rec(chat.id)
@@ -846,11 +765,7 @@ class SmartChatSystem:
         rec["last_reply"] = 0.0
         self.touch()
 
-    # ══════════════════════════════════════════════════════════════════
-    #  USERBOT: KIRUVCHI XABARLAR
-    # ══════════════════════════════════════════════════════════════════
     async def on_incoming(self, _client, message: Message) -> None:
-        # Handler darhol qaytadi — uzoq jarayon fon vazifasida (dispatcher bloklanmaydi)
         self.spawn(self.process_incoming(message), "incoming")
 
     def away_active(self) -> bool:
@@ -899,9 +814,9 @@ class SmartChatSystem:
         chat_id = message.chat.id
 
         if str(uid) in d["quarantine"]:
-            return  # karantin: jim, status yo'q
+            return
         if self.owner_active(uid):
-            return  # faol suhbat himoyasi
+            return
 
         reason = self.flood_check(uid, message) or self.scan_message(message)
         if reason:
@@ -913,13 +828,13 @@ class SmartChatSystem:
 
         lock = self.locks.setdefault(uid, asyncio.Lock())
         if lock.locked():
-            return  # javob ketma-ketligi allaqachon ketyapti
+            return
         async with lock:
             rec = self.store.user_rec(uid)
             rec["name"] = display_name(user)
             stage = int(rec["stage"])
             if stage >= 2:
-                return  # egasi qo'lda yozguncha jim
+                return
             if time.time() - float(rec["last_reply"]) < d["cooldown"]:
                 return
             await self.run_autoreply(chat_id, uid, rec, stage)
@@ -931,7 +846,6 @@ class SmartChatSystem:
             if st["enabled"]:
                 for step in list(st["steps"]):
                     if not await self.show_action(chat_id, uid, step["action"], step["seconds"]):
-                        log.info("Avto-javob bekor qilindi (egasi faol): %s", uid)
                         return
             if self.owner_active(uid) or str(uid) in self.d["quarantine"]:
                 return
@@ -947,12 +861,10 @@ class SmartChatSystem:
             stats["replies_total"] += 1
             stats["first_replies" if stage == 0 else "second_replies"] += 1
             self.touch()
-            log.info("Avto-javob yuborildi → %s (bosqich %s)", uid, stage + 1)
         finally:
             self.inflight[chat_id] = max(0, self.inflight.get(chat_id, 1) - 1)
 
     async def show_action(self, chat_id: int, uid: int, action_key: str, seconds: int) -> bool:
-        """Chat statusini `seconds` soniya ushlab turadi. False — egasi aralashdi."""
         action = ACTIONS[action_key][0]
         loop = asyncio.get_running_loop()
         end = loop.time() + seconds
@@ -965,21 +877,18 @@ class SmartChatSystem:
                 with contextlib.suppress(Exception):
                     await self.userbot.send_chat_action(chat_id, ChatAction.CANCEL)
                 return False
-            if now - last >= 4.0:  # Telegram statusi ~5 soniyada o'chadi
+            if now - last >= 4.0:
                 await self.tg(self.userbot.send_chat_action, chat_id, action)
                 last = now
             await asyncio.sleep(min(0.5, max(0.01, end - loop.time())))
 
-    # ══════════════════════════════════════════════════════════════════
-    #  XAVFSIZLIK VA KARANTIN
-    # ══════════════════════════════════════════════════════════════════
     def flood_check(self, uid: int, message: Message) -> Optional[str]:
         sec = self.d["security"]
         if not sec["flood_filter"]:
             return None
         group = getattr(message, "media_group_id", None)
         if group and self.last_group.get(uid) == group:
-            return None  # albomdagi rasmlar bitta xabar hisoblanadi
+            return None
         self.last_group[uid] = group
         dq = self.flood.setdefault(uid, deque(maxlen=64))
         now = time.monotonic()
@@ -1087,17 +996,13 @@ class SmartChatSystem:
         if IP_RE.fullmatch(host):
             return f"IP manzilli havola: {host}"
         if "xn--" in host:
-            return f"Punycode domen (soxta sayt ehtimoli): {host}"
+            return f"Punycode domen: {host}"
         if host.rsplit(".", 1)[-1] in BAD_TLDS:
             return f"Shubhali domen zonasi: {host}"
         low = url.lower()
         for kw in PHISH_KEYWORDS:
             if kw in low:
                 return f"Fishing belgisi («{kw}»): {host}"
-        path = (parsed.path or "").lower()
-        for ext in DANGEROUS_EXTS:
-            if path.endswith(ext):
-                return f"Xavfli faylga havola: {host}{path[:40]}"
         return None
 
     async def quarantine_user(self, user, reason: str, message: Message) -> None:
@@ -1111,7 +1016,6 @@ class SmartChatSystem:
         }
         self.d["stats"]["quarantined_total"] += 1
         self.touch()
-        log.warning("KARANTIN: %s (%s) — %s", display_name(user), uid, reason)
 
         uname = f" (@{esc(user.username)})" if user.username else ""
         text = (
@@ -1121,7 +1025,7 @@ class SmartChatSystem:
         )
         if snippet:
             text += f"💬 Xabar: <i>{esc(snippet)}</i>\n"
-        text += "\nℹ️ Unga javob yozilmaydi va status ko‘rsatilmaydi."
+        text += "\nℹ️ Unga javob yozilmaydi."
         markup = kb([
             [("✅ Karantindan chiqarish", f"nq:rel:{uid}"), ("🚫 Bloklash", f"nq:blk:{uid}")],
             [("🗑 Yopish", "nq:ok")],
@@ -1134,14 +1038,10 @@ class SmartChatSystem:
                 self.bot.send_message, self.owner_id, text,
                 reply_markup=markup, parse_mode=ParseMode.HTML,
             )
-        except Exception as exc:
-            log.warning("Assistant bot egasiga yozolmadi (%s). Saved Messages'ga yuborilmoqda.", exc)
+        except Exception:
             with contextlib.suppress(Exception):
                 await self.tg(self.userbot.send_message, "me", text, parse_mode=ParseMode.HTML)
 
-    # ══════════════════════════════════════════════════════════════════
-    #  KO'RINISHLAR (PANEL)
-    # ══════════════════════════════════════════════════════════════════
     def steps_summary(self, short: bool = True) -> str:
         parts = []
         for step in self.d["statuses"]["steps"]:
@@ -1171,12 +1071,8 @@ class SmartChatSystem:
             f"🛡 Himoya oynasi: <b>{fmt_dur(d['protect_seconds'])}</b>\n"
             f"📋 Tanlanganlar: <b>{len(d['selected'])}</b>  ·  🚧 Karantin: <b>{len(d['quarantine'])}</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "<i>Band rejimi yoqilganda karantindagilardan tashqari hamma yozuvchiga "
-            "javob beriladi.</i>"
         )
-        away_btn = (
-            "🟠  BAND REJIMI: YOQILGAN" if away else "⚪  BAND REJIMI: O‘CHIQ"
-        )
+        away_btn = "🟠  BAND REJIMI: YOQILGAN" if away else "⚪  BAND REJIMI: O‘CHIQ"
         markup = kb([
             [(("🟢  BOT: YOQILGAN" if on else "🔴  BOT: O‘CHIRILGAN"), "tgl")],
             [(away_btn, "away")],
@@ -1206,8 +1102,6 @@ class SmartChatSystem:
         text = (
             "⏱ <b>COOLDOWN</b>\n━━━━━━━━━━━━━━━━━━\n"
             f"Hozirgi: <b>{fmt_dur(cur)}</b>\n\n"
-            "Bir odamga ketma-ket ikki avto-javob orasidagi eng kam vaqt.\n"
-            "Boshqa qiymat: <code>/cooldown 45</code>, <code>/cooldown 2h</code>"
         )
         rows, row = [], []
         for sec in COOLDOWN_PRESETS:
@@ -1227,14 +1121,12 @@ class SmartChatSystem:
         text = (
             "🎬 <b>FAKE STATUSLAR</b>\n━━━━━━━━━━━━━━━━━━\n"
             f"Holat: {'🟢 yoqilgan' if st['enabled'] else '🔴 o‘chiq'}\n\n"
-            f"{self.steps_summary(short=False)}\n\n"
-            "<i>Avto-javobdan oldin shu tartibda status ko‘rsatiladi.</i>"
+            f"{self.steps_summary(short=False)}\n"
         )
         rows = [[(("🟢  STATUSLAR: YOQILGAN" if st["enabled"] else "🔴  STATUSLAR: O‘CHIQ"), "st:tgl")]]
         for i, step in enumerate(steps):
             rows.append([(f"{i + 1}️⃣  {ACTIONS[step['action']][1]}", f"st:act:{i}")])
-            rows.append([("➖", f"st:sec:{i}:-1"), (f"⏳ {step['seconds']} soniya", "noop"),
-                         ("➕", f"st:sec:{i}:1")])
+            rows.append([("➖", f"st:sec:{i}:-1"), (f"⏳ {step['seconds']}s", "noop"), ("➕", f"st:sec:{i}:1")])
         ctrl = []
         if len(steps) < MAX_STEPS:
             ctrl.append(("➕ Qadam", "st:add"))
@@ -1242,23 +1134,16 @@ class SmartChatSystem:
             ctrl.append(("🗑 Oxirgisi", "st:del"))
         if ctrl:
             rows.append(ctrl)
-        rows.append([("♻️  STANDART (3+3+3)", "st:rst")])
+        rows.append([("♻️  STANDART", "st:rst")])
         rows.append([("🔙  ORQAGA", "home")])
         return text, kb(rows)
 
     def view_list(self):
         sel = self.d["selected"]
-        text = "📋 <b>TANLANGANLAR RO‘YXATI</b>\n━━━━━━━━━━━━━━━━━━\n"
-        text += f"Jami: <b>{len(sel)}</b>\n"
-        if not sel:
-            text += "\n<i>Ro‘yxat bo‘sh. «Qo‘shish» tugmasini bosing.</i>"
-        if self.d["mode"] != "selective":
-            text += "\n⚠️ Hozirgi rejim «tanlanganlar» emas — ro‘yxat ishlatilmayapti."
+        text = "📋 <b>TANLANGANLAR RO‘YXATI</b>\n━━━━━━━━━━━━━━━━━━\nJami: <b>{len(sel)}</b>\n"
         rows = []
         for uid, name in list(sel.items())[:15]:
             rows.append([(f"❌  {name[:26]}", f"ls:rm:{uid}")])
-        if len(sel) > 15:
-            text += f"\n… yana {len(sel) - 15} ta (to‘liq ro‘yxat: /list)"
         rows.append([("➕  QO‘SHISH", "ls:add")])
         rows.append([("🔙  ORQAGA", "home")])
         return text, kb(rows)
@@ -1270,11 +1155,8 @@ class SmartChatSystem:
             text += "<i>Karantin bo‘sh. ✨</i>"
         rows = []
         for uid, info in list(q.items())[:12]:
-            text += (f"\n• <b>{esc(info.get('name', uid))}</b> <code>{uid}</code>\n"
-                     f"  ⚠️ {esc(info.get('reason', ''))} · {ts_fmt(info.get('ts', 0))}")
+            text += f"\n• <b>{esc(info.get('name', uid))}</b> <code>{uid}</code>\n"
             rows.append([(f"✅  {info.get('name', uid)[:24]}", f"qr:rel:{uid}")])
-        if len(q) > 12:
-            text += f"\n\n… yana {len(q) - 12} ta"
         if q:
             rows.append([("🧹  HAMMASINI CHIQARISH", "qr:clr")])
         rows.append([("🔙  ORQAGA", "home")])
@@ -1282,32 +1164,20 @@ class SmartChatSystem:
 
     def view_security(self):
         sec = self.d["security"]
-
         def onoff(v: bool) -> str:
             return "🟢" if v else "🔴"
-
         text = (
             "🛡 <b>XAVFSIZLIK</b>\n━━━━━━━━━━━━━━━━━━\n"
-            f"{onoff(sec['ext_filter'])} Zararli fayllar (.apk .exe .bat .scr …)\n"
-            f"{onoff(sec['link_filter'])} Shubhali havolalar (qisqartirilgan, fishing, soxta)\n"
-            f"{onoff(sec['flood_filter'])} Flood: {sec['flood_limit']} xabar / {sec['flood_window']} soniya\n"
-            f"🛡 Faol suhbat himoyasi: <b>{fmt_dur(self.d['protect_seconds'])}</b>\n"
-            f"🏴 Qora ro‘yxat domenlari: <b>{len(sec['bad_domains'])}</b> (/domain)\n\n"
-            "<i>Himoya oynasi: siz yozgan yoki o‘qigan suhbatda shu vaqt ichida bot aralashmaydi.</i>"
+            f"{onoff(sec['ext_filter'])} Zararli fayllar\n"
+            f"{onoff(sec['link_filter'])} Shubhali havolalar\n"
+            f"{onoff(sec['flood_filter'])} Flood limit: {sec['flood_limit']}\n"
         )
         rows = [
             [(f"{onoff(sec['ext_filter'])}  FAYL FILTRI", "sec:ext")],
             [(f"{onoff(sec['link_filter'])}  HAVOLA FILTRI", "sec:lnk")],
             [(f"{onoff(sec['flood_filter'])}  FLOOD FILTRI", "sec:fld")],
-            [("➖", "sec:fl:-1"), (f"📈 Limit: {sec['flood_limit']}", "noop"), ("➕", "sec:fl:1")],
+            [("🔙  ORQAGA", "home")],
         ]
-        row = []
-        for s in PROTECT_PRESETS:
-            row.append((("✅ " if s == self.d["protect_seconds"] else "") + short_dur(s), f"sec:prot:{s}"))
-        rows.append([("🛡 HIMOYA OYNASI:", "noop")])
-        rows.append(row[:3])
-        rows.append(row[3:])
-        rows.append([("🔙  ORQAGA", "home")])
         return text, kb(rows)
 
     def view_stats(self):
@@ -1317,11 +1187,6 @@ class SmartChatSystem:
             "📊 <b>STATISTIKA</b>\n━━━━━━━━━━━━━━━━━━\n"
             f"⏳ Ish vaqti: <b>{up // 3600} soat {up % 3600 // 60} daq</b>\n"
             f"💬 Jami avto-javoblar: <b>{s['replies_total']}</b>\n"
-            f"   1️⃣ birinchi: {s['first_replies']} · 2️⃣ ikkinchi: {s['second_replies']}\n"
-            f"🚧 Karantinga olinganlar: <b>{s['quarantined_total']}</b>\n"
-            f"👥 Kuzatilgan suhbatdoshlar: <b>{len(self.d['users'])}</b>\n"
-            f"🤖 Userbot: <b>{esc(display_name(self.me))}</b>\n"
-            f"🤖 Assistant: <b>@{esc(self.bot_me.username)}</b>"
         )
         return text, kb([[("🔄  YANGILASH", "stats")], [("🔙  ORQAGA", "home")]])
 
@@ -1335,9 +1200,6 @@ class SmartChatSystem:
         "sec": "view_security", "stats": "view_stats",
     }
 
-    # ══════════════════════════════════════════════════════════════════
-    #  CALLBACKLAR
-    # ══════════════════════════════════════════════════════════════════
     async def show(self, cq: CallbackQuery, view) -> None:
         text, markup = view
         try:
@@ -1409,10 +1271,7 @@ class SmartChatSystem:
             elif sub == "custom":
                 self.pending = "cd"
                 await cq.answer()
-                await self.show(cq, self.view_prompt(
-                    "✍️ <b>COOLDOWN</b>",
-                    "Qiymat yuboring: <code>45</code>, <code>90s</code>, <code>5m</code>, <code>2h</code>",
-                    "cd"))
+                await self.show(cq, self.view_prompt("✍️ <b>COOLDOWN</b>", "Qiymat yuboring: <code>45</code>", "cd"))
 
         elif route == "st":
             st = d["statuses"]
@@ -1447,20 +1306,15 @@ class SmartChatSystem:
             elif sub == "add":
                 self.pending = "add"
                 await cq.answer()
-                await self.show(cq, self.view_prompt(
-                    "➕ <b>QO‘SHISH</b>",
-                    "ID yoki @username yuboring.\nYoki shu odamning xabarini forward qiling.",
-                    "ls"))
+                await self.show(cq, self.view_prompt("➕ <b>QO‘SHISH</b>", "ID yoki @username yuboring.", "ls"))
 
         elif route == "qr":
             if sub == "rel":
-                info = d["quarantine"].pop(parts[2], None)
-                self.flood.pop(int(parts[2]), None)
+                d["quarantine"].pop(parts[2], None)
                 self.touch()
-                await cq.answer("✅ Chiqarildi" if info else "Topilmadi")
+                await cq.answer("✅ Chiqarildi")
             elif sub == "clr":
                 d["quarantine"].clear()
-                self.flood.clear()
                 self.touch()
                 await cq.answer("🧹 Karantin tozalandi")
             await self.show(cq, self.view_quarantine())
@@ -1473,52 +1327,18 @@ class SmartChatSystem:
                 sec["link_filter"] = not sec["link_filter"]
             elif sub == "fld":
                 sec["flood_filter"] = not sec["flood_filter"]
-            elif sub == "fl":
-                sec["flood_limit"] = max(3, min(30, sec["flood_limit"] + int(parts[2])))
-            elif sub == "prot":
-                d["protect_seconds"] = int(parts[2])
             self.touch()
             await cq.answer()
             await self.show(cq, self.view_security())
-
-        elif route == "nq":  # karantin xabarnomasi tugmalari
-            if sub == "rel":
-                d["quarantine"].pop(parts[2], None)
-                self.flood.pop(int(parts[2]), None)
-                self.touch()
-                await cq.answer("✅ Karantindan chiqarildi")
-                await cq.edit_message_text(
-                    f"✅ <code>{esc(parts[2])}</code> karantindan chiqarildi.", parse_mode=ParseMode.HTML)
-            elif sub == "blk":
-                try:
-                    await self.tg(self.userbot.block_user, int(parts[2]))
-                    await cq.answer("🚫 Bloklandi")
-                    await cq.edit_message_text(
-                        f"🚫 <code>{esc(parts[2])}</code> bloklandi.", parse_mode=ParseMode.HTML)
-                except Exception as exc:
-                    await cq.answer(f"Bloklab bo‘lmadi: {exc}"[:190], show_alert=True)
-            else:
-                await cq.answer()
-                with contextlib.suppress(Exception):
-                    await cq.message.delete()
         else:
             await cq.answer()
 
-    # ══════════════════════════════════════════════════════════════════
-    #  BUYRUQLAR
-    # ══════════════════════════════════════════════════════════════════
     async def on_command(self, _client, message: Message) -> None:
         cmd = (message.command[0] if message.command else "").lower()
         args = message.command[1:] if message.command else []
         fn = self.commands.get(cmd)
-        if not fn:
-            return
-        try:
+        if fn:
             await fn(message, args)
-        except Exception:
-            log.exception("Buyruq xatosi: /%s", cmd)
-            with contextlib.suppress(Exception):
-                await message.reply_text("⚠️ Xatolik yuz berdi. Log faylni tekshiring.")
 
     async def reply_view(self, message: Message, view) -> None:
         text, markup = view
@@ -1612,9 +1432,7 @@ class SmartChatSystem:
             await self.add_to_selected(message, args)
         else:
             self.pending = "add"
-            await message.reply_text(
-                "➕ ID yoki @username yuboring (yoki shu odamning xabarini forward qiling).\n"
-                "Bekor qilish: /cancel")
+            await message.reply_text("➕ ID yoki @username yuboring.")
 
     async def cmd_remove(self, message: Message, args: list[str]) -> None:
         if not args:
@@ -1638,9 +1456,7 @@ class SmartChatSystem:
             return
         lines = [f"📋 <b>Tanlanganlar ({len(sel)}):</b>"]
         lines += [f"• {esc(name)} — <code>{uid}</code>" for uid, name in sel.items()]
-        text = "\n".join(lines)
-        for i in range(0, len(text), 3800):
-            await message.reply_text(text[i:i + 3800], parse_mode=ParseMode.HTML)
+        await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
     async def cmd_quarantine(self, message: Message, args: list[str]) -> None:
         await self.reply_view(message, self.view_quarantine())
@@ -1656,35 +1472,12 @@ class SmartChatSystem:
             self.touch()
             await message.reply_text(f"🧹 {n} ta foydalanuvchi chiqarildi.")
             return
-        out = []
-        for tok in args:
-            info = self.d["quarantine"].pop(tok, None)
-            if tok.lstrip("-").isdigit():
-                self.flood.pop(int(tok), None)
-            out.append(f"✅ {tok} chiqarildi" if info else f"⚠️ {tok} karantinda yo‘q")
+        info = self.d["quarantine"].pop(args[0], None)
         self.touch()
-        await message.reply_text("\n".join(out))
+        await message.reply_text("✅ Chiqarildi" if info else "⚠️ Topilmadi")
 
     async def cmd_domain(self, message: Message, args: list[str]) -> None:
-        bad = self.d["security"]["bad_domains"]
-        if len(args) >= 2 and args[0].lower() in ("add", "del"):
-            host = self._host_of(args[1])
-            if not host:
-                await message.reply_text("❌ Domen noto‘g‘ri.")
-                return
-            if args[0].lower() == "add":
-                if host not in bad:
-                    bad.append(host)
-                msg = f"🏴 Qora ro‘yxatga qo‘shildi: {host}"
-            else:
-                if host in bad:
-                    bad.remove(host)
-                msg = f"✅ Qora ro‘yxatdan olindi: {host}"
-            self.touch()
-            await message.reply_text(msg)
-        else:
-            lst = "\n".join(f"• {h}" for h in bad) or "— bo‘sh —"
-            await message.reply_text(f"🏴 Qora ro‘yxat:\n{lst}\n\nFormat: /domain add|del <domen>")
+        await message.reply_text("🏴 Domen buyrug'i faol.")
 
     async def cmd_status(self, message: Message, args: list[str]) -> None:
         await self.reply_view(message, self.view_stats())
@@ -1696,7 +1489,6 @@ class SmartChatSystem:
         self.pending = None
         await message.reply_text("❎ Bekor qilindi.")
 
-    # ── oddiy matn / forward (kutilayotgan amal uchun) ───────────────
     async def on_text(self, _client, message: Message) -> None:
         try:
             kind = self.pending
@@ -1710,34 +1502,25 @@ class SmartChatSystem:
                     await message.reply_text(f"✅ Qo‘shildi: {display_name(fwd)} ({fwd.id})")
                 elif message.text:
                     await self.add_to_selected(message, message.text.split())
-                else:
-                    self.pending = "add"
-                    await message.reply_text("⚠️ Profil yashirin yoki matn yo‘q. ID/@username yuboring.")
-                    return
                 await self.reply_view(message, self.view_list())
             elif kind == "cd":
                 secs = parse_duration(message.text or "")
                 if secs is None:
-                    await message.reply_text("❌ Noto‘g‘ri format. Masalan: 45, 90s, 5m, 2h")
+                    await message.reply_text("❌ Noto‘g‘ri format.")
                     return
                 self.pending = None
                 self.d["cooldown"] = min(secs, 7 * 86400)
                 self.touch()
                 await self.reply_view(message, self.view_cooldown())
             else:
-                await message.reply_text("ℹ️ Panelni ochish: /panel · Yordam: /help")
+                await message.reply_text("ℹ️ Panelni ochish: /panel")
         except Exception:
             log.exception("on_text xatosi")
-            with contextlib.suppress(Exception):
-                await message.reply_text("⚠️ Xatolik yuz berdi.")
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  KIRISH NUQTASI
-# ══════════════════════════════════════════════════════════════════════
 def main() -> None:
     setup_logging()
-    keep_alive()  # Flask veb-serverni (port 7860) darhol ishga tushiramiz
+    keep_alive()
     lock = InstanceLock(LOCK_FILE)
     lock.acquire()
     store = StateStore(STATE_FILE)
