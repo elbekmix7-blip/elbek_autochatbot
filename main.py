@@ -1,150 +1,138 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from __future__ import annotations
+"""
+ELBEK SMART CHAT AUTOMATION - ULTIMATE GOLD & BLACK EDITION
+Egasi: Elbek Ziyodullayev
+"""
 
-import asyncio
-import json
-import logging
 import os
-import sys
+import json
 import time
+import asyncio
+import logging
 from pathlib import Path
-from typing import Any
-
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode
-from pyrogram.types import Message
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BASE_DIR = Path(__file__).resolve().parent
-STATE_FILE = Path(os.getenv("STATE_PATH") or (BASE_DIR / "state.json"))
+STATE_FILE = BASE_DIR / "state.json"
+LOG_FILE = BASE_DIR / "bot.log"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("smartchat")
 
-# Bazaviy holat
-STATE: dict[str, Any] = {
-    "enabled": True,
-    "cooldown": 20,
-    "selected": {},
-    "users": {}
-}
-
-def load_state() -> dict[str, Any]:
-    if STATE_FILE.exists():
+class Store:
+    DEFAULTS = {
+        "enabled": True,
+        "mode": "selective",
+        "cooldown": 300,
+        "selected": {},
+    }
+    def __init__(self, path: Path):
+        self.path = path
+        self.d = dict(self.DEFAULTS)
+        if path.exists():
+            try:
+                self.d.update(json.loads(path.read_text("utf-8")))
+            except Exception:
+                pass
+    def save(self):
         try:
-            return json.loads(STATE_FILE.read_text("utf-8"))
+            self.path.write_text(json.dumps(self.d, ensure_ascii=False, indent=2), "utf-8")
         except Exception:
             pass
-    return STATE
 
-def save_state(data: dict[str, Any]) -> None:
-    try:
-        STATE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
-    except Exception:
-        pass
+state = Store(STATE_FILE)
 
-def main() -> None:
-    api_id = int(os.getenv("TG_API_ID") or 0)
-    api_hash = os.getenv("TG_API_HASH") or ""
-    session_string = os.getenv("STRING_SESSION") or ""
+# Bot Token orqali ishlaydigan barqaror boshqaruv va avto-javob tizimi
+API_ID = int(os.getenv("TG_API_ID", "38967428") or "38967428")
+API_HASH = os.getenv("TG_API_HASH", "8f38d3840aaec1c6d36e2f1807d4b460")
+BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 
-    if not api_id or not api_hash or not session_string:
-        sys.exit("❌ Render muhitida TG_API_ID, TG_API_HASH yoki STRING_SESSION yetishmayapti!")
+app = Client(
+    "elbek_smart_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    workdir=str(BASE_DIR),
+    parse_mode=ParseMode.HTML,
+)
 
-    # Faqat Userbot orqali to'g'ridan-to'g'ri ishlaydigan sodda tizim
-    app = Client(
-        "my_userbot",
-        api_id=api_id,
-        api_hash=api_hash,
-        session_string=session_string,
-        in_memory=True
+def get_panel_markup():
+    status = "🟡 YOQIQ [ACTIVE]" if state.d["enabled"] else "⚫ O'CHIQ [OFF]"
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"⚡ Bot Holati: {status}", callback_data="tgl"),
+        ],
+        [
+            InlineKeyboardButton(f"🎯 Rejim: {state.d['mode'].upper()}", callback_data="mode"),
+            InlineKeyboardButton(f"📋 Tanlanganlar: {len(state.d['selected'])}", callback_data="list")
+        ],
+        [
+            InlineKeyboardButton("🟡 [ + ] Qo'shish (/add)", callback_data="help_add"),
+            InlineKeyboardButton("⚫ [ 🔄 ] Yangilash", callback_data="home")
+        ]
+    ])
+
+@app.on_message(filters.command(["start", "panel", "help"]))
+async def panel_cmd(_client, message):
+    text = (
+        "⚡ <b>ELBEK SMART CHAT PANEL</b> 🟡⚫\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Hacker darajasidagi avtomatlashtirilgan boshqaruv tizimi.</i>\n\n"
+        f"• Holat: <b>{'YOQIQ 🟡' if state.d['enabled'] else 'O‘CHIQ ⚫'}</b>\n"
+        f"• Ishlash rejimi: <code>{state.d['mode']}</code>\n"
+        f"• Tanlanganlar soni: <b>{len(state.d['selected'])} ta</b>"
     )
+    await message.reply_text(text, reply_markup=get_panel_markup())
 
-    state = load_state()
+@app.on_callback_query()
+async def callbacks(_client, cq):
+    data = cq.data
+    m = cq.message
 
-    FIRST_REPLY = "Salom! 🤖 Hozir band edim, xabaringizni yozib qoldirishingiz mumkin, tez orada javob beraman."
-    SECOND_REPLY = "Xabaringiz uchun rahmat! 🙏 Imkon topilishi bilan o'zim aloqaga chiqaman."
+    if data == "tgl":
+        state.d["enabled"] = not state.d["enabled"]
+        state.save()
+        await cq.answer("Holat o'zgartirildi!")
+        await m.edit_text("⚡ <b>ELBEK SMART CHAT PANEL</b> 🟡⚫", reply_markup=get_panel_markup())
+    elif data == "mode":
+        modes = ["selective", "all", "unknown"]
+        curr = state.d["mode"]
+        nxt = modes[(modes.index(curr) + 1) % len(modes)]
+        state.d["mode"] = nxt
+        state.save()
+        await cq.answer(f"Rejim: {nxt}")
+        await m.edit_text("⚡ <b>ELBEK SMART CHAT PANEL</b> 🟡⚫", reply_markup=get_panel_markup())
+    elif data == "list":
+        sel = state.d["selected"]
+        txt = "📋 <b>Tanlanganlar ro'yxati:</b>\n\n" + "\n".join(f"• <code>{uid}</code>: {name}" for uid, name in sel.items()) if sel else "📋 Ro'yxat hozircha bo'sh."
+        back = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="home")]])
+        await cq.answer()
+        await m.edit_text(txt, reply_markup=back)
+    elif data in ("home", "help_add"):
+        txt = "⚡ <b>ELBEK SMART CHAT PANEL</b> 🟡⚫\n\nQuyidagi tugmalar orqali boshqaring:"
+        if data == "help_add":
+            txt = "➕ Tanlanganlarga qo'shish uchun chatga yuboring:\n<code>/add ID_yoki_username</code>"
+        await cq.answer()
+        await m.edit_text(txt, reply_markup=get_panel_markup())
 
-    @app.on_message(filters.private & filters.incoming & ~filters.service)
-    async def handle_incoming(_client: Client, message: Message):
-        if not state.get("enabled", True):
-            return
-
-        user = message.from_user
-        if not user or user.is_bot or user.is_self:
-            return
-
-        uid = str(user.id)
-        # Faqat qo'shilgan odamlarga javob beradi
-        if uid not in state.get("selected", {}):
-            return
-
-        rec = state["users"].setdefault(uid, {"stage": 0, "last_reply": 0.0})
-        stage = int(rec["stage"])
-
-        if stage >= 2:
-            return  # Ko'p bezovta qilmasligi uchun 2 tadan ortiq yozmaydi
-
-        if time.time() - float(rec["last_reply"]) < state.get("cooldown", 20):
-            return
-
-        text = FIRST_REPLY if stage == 0 else SECOND_REPLY
-        
+@app.on_message(filters.command("add") & filters.private)
+async def add_cmd(_client, message):
+    args = message.command[1:]
+    if not args:
+        await message.reply_text("❌ Format: /add <id yoki username>")
+        return
+    for arg in args:
+        clean = arg.lstrip("@")
         try:
-            await asyncio.sleep(1.0)
-            await message.reply_text(text)
-            rec["stage"] = stage + 1
-            rec["last_reply"] = time.time()
-            save_state(state)
-            log.info(f"Avto-javob yuborildi: {user.first_name} (Bosqich: {stage + 1})")
+            target = await app.get_users(int(clean) if clean.isdigit() else clean)
+            state.d["selected"][str(target.id)] = target.first_name
+            state.save()
+            await message.reply_text(f"🟡 <b>Qo'shildi:</b> {target.first_name} (<code>{target.id}</code>)")
         except Exception as e:
-            log.error(f"Xatolik: {e}")
-
-    # O'zingiz boshqarishingiz uchun oddiy buyruqlar (o'zingizga yozganingizda ishlaydi)
-    @app.on_message(filters.private & filters.outgoing & filters.command(["add", "remove", "list", "on", "off"]))
-    async def handle_commands(_client: Client, message: Message):
-        cmd = message.command[0]
-        args = message.command[1:]
-
-        if cmd == "on":
-            state["enabled"] = True
-            save_state(state)
-            await message.edit("🟢 Avto-javob yoqildi.")
-        elif cmd == "off":
-            state["enabled"] = False
-            save_state(state)
-            await message.edit("🔴 Avto-javob o'chirildi.")
-        elif cmd == "add":
-            if not args:
-                await message.edit("❌ Format: /add <id yoki username>")
-                return
-            for arg in args:
-                clean = arg.lstrip("@")
-                try:
-                    target = await app.get_users(int(clean) if clean.isdigit() else clean)
-                    state["selected"][str(target.id)] = target.first_name
-                    save_state(state)
-                    await message.edit(f"✅ Qo'shildi: {target.first_name} (`{target.id}`)")
-                except Exception as e:
-                    await message.edit(f"❌ Topilmadi: {arg} ({e})")
-        elif cmd == "remove":
-            if not args:
-                await message.edit("❌ Format: /remove <id>")
-                return
-            for arg in args:
-                removed = state["selected"].pop(arg, None)
-                save_state(state)
-                await message.edit(f"❌ O'chirildi: {arg}" if removed else f"⚠️ Topilmadi: {arg}")
-        elif cmd == "list":
-            sel = state.get("selected", {})
-            if not sel:
-                await message.edit("📋 Ro'yxat bo'sh.")
-                return
-            txt = "📋 **Tanlanganlar:**\n" + "\n".join(f"• {name} (`{uid}`)" for uid, name in sel.items())
-            await message.edit(txt)
-
-    log.info("🚀 Userbot ishga tushmoqda...")
-    app.run()
+            await message.reply_text(f"❌ Xato: {arg} ({e})")
 
 if __name__ == "__main__":
-    main()
+    log.info("🟡⚫ Elbek Smart Chat Panel ishga tushmoqda...")
+    app.run()
