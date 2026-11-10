@@ -18,7 +18,11 @@ Majburiy:
 Ixtiyoriy (hammasida default qiymat bor):
   PORT                     Flask keep-alive porti                  (7860)
   DEFAULT_MODE             selected | all                          (selected)
-  PHASE_SECONDS            har bir soxta status davomiyligi, soniya (3)
+  FAKE_PHOTO_SECONDS       Modul A: "rasm yuklayapti" davomiyligi, soniya (3)
+  FAKE_DOC_SECONDS         Modul A: "fayl yuklayapti" davomiyligi, soniya (5)
+  FAKE_TYPING_SECONDS      Modul A: "yozyapti" davomiyligi, soniya (9)
+  FAKE_COOLDOWN            faqat-fake rejimida bir suhbatda takror oralig'i, soniya (30)
+  ALL_INCLUDE_CONTACTS     /mode all da kontaktlarga ham ishlasinmi (0)
   OWNER_ACTIVE_WINDOW      egasi yozgandan keyin "faol suhbat" oynasi, soniya (900)
   READ_ACTIVE_WINDOW       egasi o'qigandan keyin "faol suhbat" oynasi, soniya (120)
   BURST_GRACE              1-javobdan keyin shu soniya ichidagi xabarlar bitta deb sanaladi (8)
@@ -31,8 +35,11 @@ Ixtiyoriy (hammasida default qiymat bor):
   SELF_PING                RENDER_EXTERNAL_URL ni o'zi chaqirib turadi (1)
   LOG_LEVEL                INFO / DEBUG                            (INFO)
 
-BUYRUQLAR (faqat Saved Messages): /on /off /add /remove /list /status /panel
-/help  +  qo'shimcha: /mode /quarantine /release /reset
+MODULLAR (bir-biridan mustaqil):
+  A) Fake Status  — /fake on|off | photo N | doc N | typing N | set A B C | cooldown N | reset
+  B) Auto-Reply   — /reply on|off
+BUYRUQLAR (faqat Saved Messages): /on /off /fake /reply /mode /contacts /add
+/remove /list /status /panel /help /quarantine /release /reset
 ==============================================================================
 """
 from __future__ import annotations
@@ -45,6 +52,7 @@ import html
 import ipaddress
 import json
 import logging
+import math
 import os
 import platform
 import re
@@ -110,7 +118,13 @@ class Config:
     PORT: int = _env_int("PORT", 7860)
     DEFAULT_MODE: str = _env_str("DEFAULT_MODE", "selected").lower()
 
-    PHASE_SECONDS: float = _env_float("PHASE_SECONDS", 3.0)
+    FAKE_PHOTO_SECONDS: float = _env_float("FAKE_PHOTO_SECONDS", 3.0)
+    FAKE_DOC_SECONDS: float = _env_float("FAKE_DOC_SECONDS", 5.0)
+    FAKE_TYPING_SECONDS: float = _env_float("FAKE_TYPING_SECONDS", 9.0)
+    FAKE_COOLDOWN: float = _env_float("FAKE_COOLDOWN", 30.0)
+    MAX_PHASE_SECONDS: float = 120.0
+    MAX_COOLDOWN: float = 3600.0
+    ALL_INCLUDE_CONTACTS: bool = _env_bool("ALL_INCLUDE_CONTACTS", False)
     ACTION_REFRESH: float = 2.5  # Telegram status ~5s yashaydi, shuning uchun yangilab turamiz
 
     OWNER_ACTIVE_WINDOW: float = _env_float("OWNER_ACTIVE_WINDOW", 900.0)
@@ -175,32 +189,45 @@ BOT_TEXTS: Set[str] = {FIRST_REPLY.strip(), SECOND_REPLY.strip()}
 
 HELP_TEXT = (
     "🤖 <b>Smart Chat Automation Userbot</b>\n\n"
-    "<b>Boshqaruv</b> (faqat shu chatda):\n"
-    "• <code>/on</code> — avto-javobni yoqish\n"
-    "• <code>/off</code> — avto-javobni o'chirish\n"
-    "• <code>/status</code> — joriy holat va statistika\n"
-    "• <code>/panel</code> — to'liq boshqaruv paneli\n"
-    "• <code>/list</code> — tanlanganlar ro'yxati\n"
-    "• <code>/help</code> — shu yordam\n\n"
+    "<b>Umumiy</b> (faqat shu chatda):\n"
+    "• <code>/on</code> · <code>/off</code> — ikkala modulni birdan yoqish/o'chirish\n"
+    "• <code>/status</code> · <code>/panel</code> · <code>/list</code> · <code>/help</code>\n\n"
+    "🎭 <b>MODUL A — Fake Status</b>\n"
+    "• <code>/fake on</code> · <code>/fake off</code>\n"
+    "• <code>/fake photo 3</code> — «rasm yuklayapti» davomiyligi (soniya)\n"
+    "• <code>/fake doc 5</code> — «fayl yuklayapti»\n"
+    "• <code>/fake typing 9</code> — «yozyapti»\n"
+    "• <code>/fake set 3 5 9</code> — uchalasini birdan\n"
+    "• <code>/fake cooldown 30</code> — javobsiz rejimda takror oralig'i\n"
+    "• <code>/fake reset</code> — standart 3/5/9\n"
+    "<i>0 yoki off = shu bosqich o'tkazib yuboriladi.</i>\n\n"
+    "💬 <b>MODUL B — Auto-Reply</b>\n"
+    "• <code>/reply on</code> · <code>/reply off</code> · <code>/reply</code> (holat)\n"
+    "1-xabarga to'liq salom, 2-xabarga minnatdorchilik, undan keyin siz qo'lda "
+    "javob yozguningizcha jim.\n\n"
+    "🔀 <b>Kombinatsiyalar</b>\n"
+    "• A + B — avval statuslar, so'ng javob\n"
+    "• faqat A — statuslar ko'rinadi, matn yuborilmaydi\n"
+    "• faqat B — javob darhol yuboriladi (statussiz)\n\n"
+    "👥 <b>Kimlarga ishlaydi</b>\n"
+    "• <code>/mode selected</code> — faqat <code>/add</code> qilinganlarga (default)\n"
+    "• <code>/mode all</code> — barcha notanishlarga (kontaktlar o'tkazib yuboriladi)\n"
+    "• <code>/contacts on|off</code> — <code>all</code> rejimida kontaktlarni ham qo'shish\n\n"
     "<b>Odam qo'shish (ID so'ralmaydi):</b>\n"
     "1️⃣ <code>/add @username</code>\n"
     "2️⃣ Odamning xabarini shu chatga <b>forward</b> qiling, so'ng unga "
     "<b>reply</b> qilib <code>/add</code> yozing (yoki forwarddan keyin shunchaki "
     "<code>/add</code>)\n"
     "3️⃣ <code>/add 123456789</code> (raqamli ID)\n"
-    "Bir nechtasini birdan: <code>/add @a @b 12345</code>\n\n"
+    "Bir nechtasini birdan: <code>/add @a @b 12345</code>\n"
     "<b>Olib tashlash:</b> <code>/remove @username</code> | ID | forward+reply | "
     "<code>/remove all</code>\n\n"
-    "<b>Qo'shimcha:</b>\n"
-    "• <code>/mode selected</code> — faqat tanlanganlarga javob (default)\n"
-    "• <code>/mode all</code> — barcha shaxsiy chatlarga javob\n"
-    "• <code>/quarantine</code> — karantindagilar ro'yxati\n"
+    "🛡 <b>Xavfsizlik</b> (modullarga bog'liq emas, doim ishlaydi)\n"
+    "• <code>/quarantine</code> — karantindagilar\n"
     "• <code>/release @user|ID|all</code> — karantindan chiqarish\n"
     "• <code>/reset @user|ID|all</code> — suhbat bosqichini noldan boshlash\n\n"
-    "<b>Mantiq:</b> avval 9 soniyalik tabiiy status (3s rasm → 3s fayl → 3s yozish), "
-    "keyin javob. 1-xabarga to'liq salom, 2-xabarga minnatdorchilik, undan keyin "
-    "siz qo'lda javob yozguningizcha bot jim turadi. Siz o'zingiz yozayotgan yoki "
-    "o'qigan suhbatlarga bot aralashmaydi."
+    "<b>Faol suhbat himoyasi:</b> siz yozgan yoki o'qigan suhbatda bot na status "
+    "ko'rsatadi, na javob yuboradi."
 )
 
 
@@ -225,6 +252,20 @@ def human_duration(seconds: float) -> str:
     if not parts:
         parts.append(f"{secs} son")
     return " ".join(parts)
+
+
+def clamp_seconds(value: Any, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(number):
+        return 0.0
+    return round(min(max(number, 0.0), maximum), 1)
+
+
+def fmt_secs(value: float) -> str:
+    return f"{value:g}s"
 
 
 def display_name(user: Any) -> str:
@@ -574,12 +615,19 @@ STATE_TAG_PREFIX = "🗄 USERBOT_STATE_V1"
 class Store:
     def __init__(self, path: str) -> None:
         self.path = path
-        self.enabled: bool = True
+        self.enabled: bool = True  # bosh o'chirgich (ikkala modul)
+        self.fake_enabled: bool = True  # MODUL A
+        self.reply_enabled: bool = True  # MODUL B
+        self.fake_photo: float = clamp_seconds(Config.FAKE_PHOTO_SECONDS, Config.MAX_PHASE_SECONDS)
+        self.fake_doc: float = clamp_seconds(Config.FAKE_DOC_SECONDS, Config.MAX_PHASE_SECONDS)
+        self.fake_typing: float = clamp_seconds(Config.FAKE_TYPING_SECONDS, Config.MAX_PHASE_SECONDS)
+        self.fake_cooldown: float = clamp_seconds(Config.FAKE_COOLDOWN, Config.MAX_COOLDOWN)
+        self.include_contacts: bool = Config.ALL_INCLUDE_CONTACTS
         self.mode: str = Config.DEFAULT_MODE if Config.DEFAULT_MODE in {"selected", "all"} else "selected"
         self.selected: Dict[str, Dict[str, Any]] = {}
         self.quarantine: Dict[str, Dict[str, Any]] = {}
         self.chats: Dict[str, Dict[str, Any]] = {}
-        self.stats: Dict[str, int] = {"replies_sent": 0, "aborted": 0, "quarantined": 0}
+        self.stats: Dict[str, int] = {"replies_sent": 0, "aborted": 0, "quarantined": 0, "fake_runs": 0}
         self.updated_at: float = 0.0
         self.dirty: bool = False
         self._cloud_msg_id: Optional[int] = None
@@ -595,6 +643,13 @@ class Store:
             "v": 1,
             "updated_at": self.updated_at,
             "enabled": self.enabled,
+            "fake_enabled": self.fake_enabled,
+            "reply_enabled": self.reply_enabled,
+            "fake_photo": self.fake_photo,
+            "fake_doc": self.fake_doc,
+            "fake_typing": self.fake_typing,
+            "fake_cooldown": self.fake_cooldown,
+            "include_contacts": self.include_contacts,
             "mode": self.mode,
             "selected": self.selected,
             "quarantine": self.quarantine,
@@ -606,6 +661,13 @@ class Store:
 
     def apply_dict(self, data: Dict[str, Any]) -> None:
         self.enabled = bool(data.get("enabled", True))
+        self.fake_enabled = bool(data.get("fake_enabled", True))
+        self.reply_enabled = bool(data.get("reply_enabled", True))
+        self.fake_photo = clamp_seconds(data.get("fake_photo", self.fake_photo), Config.MAX_PHASE_SECONDS)
+        self.fake_doc = clamp_seconds(data.get("fake_doc", self.fake_doc), Config.MAX_PHASE_SECONDS)
+        self.fake_typing = clamp_seconds(data.get("fake_typing", self.fake_typing), Config.MAX_PHASE_SECONDS)
+        self.fake_cooldown = clamp_seconds(data.get("fake_cooldown", self.fake_cooldown), Config.MAX_COOLDOWN)
+        self.include_contacts = bool(data.get("include_contacts", self.include_contacts))
         mode = str(data.get("mode", self.mode)).lower()
         self.mode = mode if mode in {"selected", "all"} else "selected"
         sel = data.get("selected", {})
@@ -616,9 +678,31 @@ class Store:
         self.chats = {str(k): dict(v) for k, v in chats.items()} if isinstance(chats, dict) else {}
         stats = data.get("stats", {})
         if isinstance(stats, dict):
-            for key in ("replies_sent", "aborted", "quarantined"):
+            for key in ("replies_sent", "aborted", "quarantined", "fake_runs"):
                 self.stats[key] = int(stats.get(key, self.stats.get(key, 0)))
         self.updated_at = float(data.get("updated_at", 0.0))
+
+    # ---- MODUL A sozlamalari --------------------------------------------
+    def fake_total(self) -> float:
+        return self.fake_photo + self.fake_doc + self.fake_typing
+
+    def fake_active(self) -> bool:
+        return self.fake_enabled and self.fake_total() > 0
+
+    def fake_phases(self) -> List[Tuple[str, Any, float]]:
+        """Davomiyligi 0 dan katta bosqichlar: (nomi, ChatAction, soniya)."""
+        specs = (
+            ("rasm yuklayapti", enums.ChatAction.UPLOAD_PHOTO, self.fake_photo),
+            ("fayl yuklayapti", enums.ChatAction.UPLOAD_DOCUMENT, self.fake_doc),
+            ("yozyapti", enums.ChatAction.TYPING, self.fake_typing),
+        )
+        return [(label, action, secs) for label, action, secs in specs if secs > 0]
+
+    def reset_fake_durations(self) -> None:
+        self.fake_photo = 3.0
+        self.fake_doc = 5.0
+        self.fake_typing = 9.0
+        self.fake_cooldown = 30.0
 
     # ---- chat holati ----------------------------------------------------
     def chat(self, chat_id: int) -> Dict[str, Any]:
@@ -855,6 +939,7 @@ class Engine:
         self.owner_out: Dict[int, float] = {}
         self.owner_read: Dict[int, float] = {}
         self.last_bot_send: Dict[int, float] = {}
+        self.last_fake: Dict[int, float] = {}
         self.last_notice: Dict[str, float] = {}
         self._sent_q: Deque[Tuple[int, int]] = collections.deque(maxlen=1000)
         self._sent_set: Set[Tuple[int, int]] = set()
@@ -975,7 +1060,7 @@ class Engine:
         if getattr(user, "is_deleted", False):
             return
 
-        # 1) Xavfsizlik — doim ishlaydi (avto-javob o'chiq bo'lsa ham)
+        # 1) Xavfsizlik — modullardan mustaqil, doim ishlaydi
         scan = self.scanner.scan(message)
         if scan.flagged:
             await self._quarantine(client, message, user, scan)
@@ -984,13 +1069,23 @@ class Engine:
         uid_key = str(user.id)
         if uid_key in self.store.quarantine:
             return
+
+        # 2) Modullar: A (fake status) va B (auto-reply) mustaqil
         if not self.store.enabled:
             return
+        do_fake = self.store.fake_active()
+        do_reply = self.store.reply_enabled
+        if not do_fake and not do_reply:
+            return
 
+        # 3) Kimlarga taalluqli
+        record = self.store.selected.get(uid_key)
         if self.store.mode == "selected":
-            record = self.store.selected.get(uid_key)
             if record is None:
                 return
+        elif record is None and getattr(user, "is_contact", False) and not self.store.include_contacts:
+            return  # "all" rejimi — faqat notanishlar (kontaktlar o'tkazib yuboriladi)
+        if record is not None:
             self._refresh_record(record, user)
 
         chat_id = message.chat.id
@@ -999,26 +1094,33 @@ class Engine:
 
         async with self.locks[chat_id]:
             if self.is_running(chat_id):
-                return  # ketma-ketlik ketyapti — yangi xabarlar shu javobga qo'shiladi
+                return  # ketma-ketlik ketyapti — yangi xabarlar shu jarayonga qo'shiladi
 
+            # 4) Faol suhbat himoyasi: status ham, javob ham yo'q
             reason = self.owner_activity_reason(chat_id)
             if reason:
                 log.info("[%s] jim turildi: %s", chat_id, reason)
                 return
 
-            state = self.store.chats.get(str(chat_id)) or {"stage": 0, "last_reply_at": 0.0}
-            stage = int(state.get("stage", 0))
-            if stage >= 2:
-                return  # egasi qo'lda javob yozguncha jim
-            if stage >= 1 and time.time() - float(state.get("last_reply_at", 0.0)) < Config.BURST_GRACE:
-                return  # 1-javobdan zumda kelgan xabarlar — bitta "burst"
+            now = time.time()
+            if do_reply:
+                state = self.store.chats.get(str(chat_id)) or {"stage": 0, "last_reply_at": 0.0}
+                stage = int(state.get("stage", 0))
+                if stage >= 2:
+                    return  # egasi qo'lda javob yozguncha jim
+                if stage >= 1 and now - float(state.get("last_reply_at", 0.0)) < Config.BURST_GRACE:
+                    return  # 1-javobdan zumda kelgan xabarlar — bitta "burst"
+            elif now - self.last_fake.get(chat_id, 0.0) < self.store.fake_cooldown:
+                return  # faqat-fake rejimi: takror statuslar orasida pauza
 
             if await self._history_shows_owner_activity(client, chat_id):
                 log.info("[%s] jim turildi: tarixda egasining yaqin javobi bor", chat_id)
                 return
 
+            phases = self.store.fake_phases() if do_fake else []
             task = asyncio.create_task(
-                self._sequence(client, chat_id, user.id), name=f"autoreply-{chat_id}"
+                self._sequence(client, chat_id, user.id, phases, do_reply),
+                name=f"autoreply-{chat_id}",
             )
             self.tasks[chat_id] = task
             task.add_done_callback(lambda t, cid=chat_id: self._on_task_done(cid, t))
@@ -1142,22 +1244,31 @@ class Engine:
                 return None
         return None
 
-    async def _sequence(self, client: Client, chat_id: int, uid: int) -> None:
+    async def _sequence(
+        self,
+        client: Client,
+        chat_id: int,
+        uid: int,
+        phases: List[Tuple[str, Any, float]],
+        do_reply: bool,
+    ) -> None:
+        """MODUL A (phases bo'sh bo'lmasa) va/yoki MODUL B (do_reply) ketma-ketligi."""
         started = time.time()
-        completed = False
-        phases = (
-            ("rasm yuklayapti", enums.ChatAction.UPLOAD_PHOTO),
-            ("fayl yuklayapti", enums.ChatAction.UPLOAD_DOCUMENT),
-            ("yozyapti", enums.ChatAction.TYPING),
-        )
+        replied = False
         try:
-            for label, action in phases:
-                log.debug("[%s] status: %s", chat_id, label)
-                await self._hold_action(client, chat_id, uid, action, Config.PHASE_SECONDS, started)
+            for label, action, seconds in phases:
+                log.debug("[%s] status: %s (%.1fs)", chat_id, label, seconds)
+                await self._hold_action(client, chat_id, uid, action, seconds, started)
+            if phases:
+                self.last_fake[chat_id] = time.time()
+                self.store.stats["fake_runs"] += 1
+                self.store.touch()
 
             reason = self._abort_reason(chat_id, uid, started)
             if reason:
                 raise _Aborted(reason)
+            if not do_reply:
+                return  # faqat MODUL A — statuslar tugadi (finally CANCEL yuboradi)
 
             state = self.store.chat(chat_id)
             stage = int(state.get("stage", 0))
@@ -1171,23 +1282,22 @@ class Engine:
             state["last_reply_at"] = time.time()
             self.store.stats["replies_sent"] += 1
             self.store.touch()
-            completed = True
+            replied = True
             log.info("[%s] %d-bosqich avto-javobi yuborildi", chat_id, stage + 1)
         except _Aborted as exc:
             self.store.stats["aborted"] += 1
             self.store.touch()
-            log.info("[%s] avto-javob to'xtatildi: %s", chat_id, exc)
+            log.info("[%s] ketma-ketlik to'xtatildi: %s", chat_id, exc)
         except asyncio.CancelledError:
             self.store.stats["aborted"] += 1
             self.store.touch()
             raise
         except Exception:
-            log.exception("[%s] avto-javob ketma-ketligida xatolik", chat_id)
+            log.exception("[%s] ketma-ketlikda xatolik", chat_id)
         finally:
-            if not completed:
+            if not replied and phases:
                 with contextlib.suppress(Exception):
                     await client.send_chat_action(chat_id, enums.ChatAction.CANCEL)
-
 
 # ==============================================================================
 # 9. ASOSIY ILOVA: Saved Messages buyruqlari + hayot sikli
@@ -1244,6 +1354,9 @@ class UserbotApp:
             "quarantine": self.cmd_quarantine,
             "release": self.cmd_release,
             "reset": self.cmd_reset,
+            "fake": self.cmd_fake,
+            "reply": self.cmd_reply,
+            "contacts": self.cmd_contacts,
         }
 
     # ---- filtrlar -------------------------------------------------------------
@@ -1433,13 +1546,13 @@ class UserbotApp:
     async def cmd_on(self, message: Any, args: List[str]) -> None:
         self.store.enabled = True
         self.store.touch()
-        await self.say("✅ Avto-javob <b>yoqildi</b>.")
+        await self.say("✅ Bosh o'chirgich <b>yoqildi</b> (modullar o'z sozlamalari bo'yicha ishlaydi).\n\n" + self._modules_block())
 
     async def cmd_off(self, message: Any, args: List[str]) -> None:
         self.store.enabled = False
         self.store.touch()
         self.engine.cancel_all("avto-javob /off qilindi")
-        await self.say("⛔ Avto-javob <b>o'chirildi</b>. (Xavfsizlik skaneri ishlashda davom etadi.)")
+        await self.say("⛔ Bosh o'chirgich <b>o'chirildi</b>: A va B modullari to'xtadi. (Xavfsizlik skaneri ishlashda davom etadi.)")
 
     async def cmd_add(self, message: Any, args: List[str]) -> None:
         targets, notes = await self._collect_targets(message, args, local_first=False)
@@ -1470,7 +1583,7 @@ class UserbotApp:
             self.pending_forward = None
         lines += [f"⚠️ {n}" for n in notes]
         if self.store.mode == "all":
-            lines.append("\nℹ️ Hozir rejim <b>all</b> — ro'yxat hisobga olinmaydi. <code>/mode selected</code>")
+            lines.append("\nℹ️ Hozir rejim <b>all</b> — barcha notanishlar qamrab olinadi. Faqat tanlanganlar uchun: <code>/mode selected</code>")
         lines.append(f"\n📋 Jami tanlanganlar: <b>{len(self.store.selected)}</b>")
         await self.say("\n".join(lines))
 
@@ -1521,20 +1634,55 @@ class UserbotApp:
             )
         await self.say("\n".join(lines))
 
-    def _status_block(self) -> str:
-        active = sum(1 for t in self.engine.tasks.values() if not t.done())
-        silent = sum(1 for v in self.store.chats.values() if int(v.get("stage", 0)) >= 2)
-        mode_text = "faqat tanlanganlarga" if self.store.mode == "selected" else "barcha shaxsiy chatlarga"
+    def _modules_block(self) -> str:
+        st = self.store
+        master = "" if st.enabled else " <i>(bosh o'chirgich /off — hozir to'xtagan)</i>"
+        a_state = "✅ yoqilgan" if st.fake_enabled else "⛔ o'chirilgan"
+        if st.fake_enabled and st.fake_total() <= 0:
+            a_state = "⚠️ yoqilgan, lekin barcha bosqichlar 0s"
+        b_state = "✅ yoqilgan" if st.reply_enabled else "⛔ o'chirilgan"
         return (
-            f"• Avto-javob: {'✅ yoqilgan' if self.store.enabled else '⛔ o`chirilgan'}\n"
-            f"• Rejim: <b>{self.store.mode}</b> ({mode_text})\n"
-            f"• Tanlanganlar: <b>{len(self.store.selected)}</b>\n"
-            f"• Karantinda: <b>{len(self.store.quarantine)}</b>\n"
-            f"• Hozir ishlayotgan javoblar: <b>{active}</b>\n"
+            f"🎭 <b>Modul A — Fake Status:</b> {a_state}{master}\n"
+            f"   📷 {fmt_secs(st.fake_photo)} → 📎 {fmt_secs(st.fake_doc)} → ⌨️ {fmt_secs(st.fake_typing)} "
+            f"(jami {fmt_secs(st.fake_total())})\n"
+            f"💬 <b>Modul B — Auto-Reply:</b> {b_state}{master}"
+        )
+
+    def _combo_text(self) -> str:
+        st = self.store
+        if not st.enabled:
+            return "hech narsa (bosh o'chirgich o'chiq)"
+        a = st.fake_active()
+        b = st.reply_enabled
+        if a and b:
+            return "A + B: avval statuslar, so'ng javob"
+        if a:
+            return "faqat A: statuslar ko'rinadi, matn yuborilmaydi"
+        if b:
+            return "faqat B: javob darhol yuboriladi"
+        return "ikkala modul ham o'chiq"
+
+    def _status_block(self) -> str:
+        st = self.store
+        active = sum(1 for t in self.engine.tasks.values() if not t.done())
+        silent = sum(1 for v in st.chats.values() if int(v.get("stage", 0)) >= 2)
+        if st.mode == "selected":
+            mode_text = "faqat tanlanganlarga"
+        else:
+            mode_text = "barcha notanishlarga" + (" + kontaktlar" if st.include_contacts else " (kontaktlarsiz)")
+        return (
+            f"{self._modules_block()}\n"
+            f"🔀 Joriy kombinatsiya: <b>{self._combo_text()}</b>\n\n"
+            f"• Master: {'✅ yoqilgan' if st.enabled else '⛔ o`chirilgan'}\n"
+            f"• Rejim: <b>{st.mode}</b> ({mode_text})\n"
+            f"• Tanlanganlar: <b>{len(st.selected)}</b>\n"
+            f"• Karantinda: <b>{len(st.quarantine)}</b>\n"
+            f"• Hozir ishlayotgan jarayonlar: <b>{active}</b>\n"
             f"• Jim turgan suhbatlar: <b>{silent}</b>\n"
-            f"• Yuborilgan avto-javoblar: <b>{self.store.stats['replies_sent']}</b>\n"
-            f"• Bekor qilinganlar: <b>{self.store.stats['aborted']}</b>\n"
-            f"• Karantinga olinganlar (jami): <b>{self.store.stats['quarantined']}</b>\n"
+            f"• Fake status ko'rsatilgan: <b>{st.stats['fake_runs']}</b>\n"
+            f"• Yuborilgan avto-javoblar: <b>{st.stats['replies_sent']}</b>\n"
+            f"• Bekor qilinganlar: <b>{st.stats['aborted']}</b>\n"
+            f"• Karantinga olinganlar (jami): <b>{st.stats['quarantined']}</b>\n"
             f"• Ishlash vaqti: {human_duration(time.time() - START_TS)}\n"
             f"• Python {platform.python_version()} · Pyrogram {esc(str(PYROGRAM_VERSION))}"
         )
@@ -1550,9 +1698,10 @@ class UserbotApp:
             f"• Siz yozgandan keyin {int(Config.OWNER_ACTIVE_WINDOW // 60)} daqiqa jim\n"
             f"• Siz o'qigandan keyin {int(Config.READ_ACTIVE_WINDOW)} soniya jim\n\n"
             "<b>Tezkor buyruqlar:</b>\n"
-            "<code>/on</code> · <code>/off</code> · <code>/add</code> · <code>/remove</code> · "
-            "<code>/list</code> · <code>/mode</code> · <code>/quarantine</code> · "
-            "<code>/release</code> · <code>/reset</code> · <code>/help</code>"
+            "<code>/on</code> · <code>/off</code> · <code>/fake</code> · <code>/reply</code> · "
+            "<code>/mode</code> · <code>/contacts</code> · <code>/add</code> · <code>/remove</code> · "
+            "<code>/list</code> · <code>/quarantine</code> · <code>/release</code> · "
+            "<code>/reset</code> · <code>/help</code>"
         )
         await self.say(text)
 
@@ -1573,7 +1722,8 @@ class UserbotApp:
             await self.say("⚠️ Rejim: <code>selected</code> yoki <code>all</code>")
             return
         self.store.touch()
-        await self.say(f"⚙️ Rejim o'zgardi: <b>{self.store.mode}</b>")
+        extra = ("\nKontaktlar: " + ("ham qamrab olinadi" if self.store.include_contacts else "o'tkazib yuboriladi (<code>/contacts on</code>)")) if self.store.mode == "all" else ""
+        await self.say(f"⚙️ Rejim o'zgardi: <b>{self.store.mode}</b>{extra}")
 
     async def cmd_quarantine(self, message: Any, args: List[str]) -> None:
         if not self.store.quarantine:
@@ -1633,6 +1783,122 @@ class UserbotApp:
             lines.append(f"♻️ Nolga qaytarildi: {mention(t.uid, t.name)} — <code>{t.uid}</code>")
         lines += [f"⚠️ {n}" for n in notes]
         await self.say("\n".join(lines))
+
+    # ---- MODUL A / MODUL B / kontaktlar buyruqlari ----------------------------
+    @staticmethod
+    def _parse_seconds(token: str, maximum: float) -> Optional[float]:
+        text = token.strip().lower().replace(",", ".")
+        if text in {"off", "0", "yoq", "yo'q"}:
+            return 0.0
+        try:
+            value = float(text)
+        except ValueError:
+            return None
+        if not math.isfinite(value) or value < 0 or value > maximum:
+            return None
+        return round(value, 1)
+
+    def _fake_text(self) -> str:
+        st = self.store
+        return (
+            "🎭 <b>MODUL A — Fake Status</b>\n"
+            f"Holat: {'✅ yoqilgan' if st.fake_enabled else '⛔ o`chirilgan'}\n"
+            f"• 📷 Rasm yuklayapti: <b>{fmt_secs(st.fake_photo)}</b>\n"
+            f"• 📎 Fayl yuklayapti: <b>{fmt_secs(st.fake_doc)}</b>\n"
+            f"• ⌨️ Yozyapti: <b>{fmt_secs(st.fake_typing)}</b>\n"
+            f"• Jami: <b>{fmt_secs(st.fake_total())}</b> · cooldown (javobsiz rejimda): "
+            f"<b>{fmt_secs(st.fake_cooldown)}</b>\n\n"
+            "<code>/fake on|off</code> · <code>/fake photo 3</code> · <code>/fake doc 5</code> · "
+            "<code>/fake typing 9</code>\n"
+            "<code>/fake set 3 5 9</code> · <code>/fake cooldown 30</code> · <code>/fake reset</code>\n"
+            f"<i>0 yoki off = bosqichni o'tkazib yuborish. Maksimum: {int(Config.MAX_PHASE_SECONDS)}s.</i>"
+        )
+
+    async def cmd_fake(self, message: Any, args: List[str]) -> None:
+        st = self.store
+        if not args:
+            await self.say(self._fake_text())
+            return
+        sub = args[0].lower()
+        if sub in {"on", "off"}:
+            st.fake_enabled = sub == "on"
+            st.touch()
+            self.engine.cancel_all("modul A holati o'zgardi")
+            await self.say(f"🎭 Modul A (Fake Status) {'✅ yoqildi' if st.fake_enabled else '⛔ o`chirildi'}.\n\n" + self._fake_text())
+            return
+        if sub == "reset":
+            st.reset_fake_durations()
+            st.touch()
+            await self.say("♻️ Standart qiymatlar tiklandi.\n\n" + self._fake_text())
+            return
+        if sub == "set":
+            if len(args) < 4:
+                await self.say("Foydalanish: <code>/fake set 3 5 9</code> (rasm, fayl, yozish — soniyalarda)")
+                return
+            values = [self._parse_seconds(a, Config.MAX_PHASE_SECONDS) for a in args[1:4]]
+            if any(v is None for v in values):
+                await self.say(f"⚠️ Qiymatlar 0 dan {int(Config.MAX_PHASE_SECONDS)} gacha son (yoki off) bo'lishi kerak.")
+                return
+            st.fake_photo, st.fake_doc, st.fake_typing = values  # type: ignore[assignment]
+        elif sub == "cooldown":
+            if len(args) < 2:
+                await self.say("Foydalanish: <code>/fake cooldown 30</code>")
+                return
+            value = self._parse_seconds(args[1], Config.MAX_COOLDOWN)
+            if value is None:
+                await self.say(f"⚠️ Cooldown 0 dan {int(Config.MAX_COOLDOWN)} gacha bo'lishi kerak.")
+                return
+            st.fake_cooldown = value
+        else:
+            aliases = {
+                "photo": "fake_photo", "rasm": "fake_photo",
+                "doc": "fake_doc", "document": "fake_doc", "fayl": "fake_doc",
+                "typing": "fake_typing", "type": "fake_typing", "yozish": "fake_typing",
+            }
+            attr = aliases.get(sub)
+            if attr is None or len(args) < 2:
+                await self.say(self._fake_text())
+                return
+            value = self._parse_seconds(args[1], Config.MAX_PHASE_SECONDS)
+            if value is None:
+                await self.say(f"⚠️ Qiymat 0 dan {int(Config.MAX_PHASE_SECONDS)} gacha son (yoki off) bo'lishi kerak.")
+                return
+            setattr(st, attr, value)
+        st.touch()
+        await self.say("✅ Saqlandi.\n\n" + self._fake_text())
+
+    def _reply_text(self) -> str:
+        st = self.store
+        return (
+            "💬 <b>MODUL B — Auto-Reply</b>\n"
+            f"Holat: {'✅ yoqilgan' if st.reply_enabled else '⛔ o`chirilgan'}\n"
+            f"• 1-xabar: <code>{esc(FIRST_REPLY[:55])}…</code>\n"
+            f"• 2-xabar: <code>{esc(SECOND_REPLY[:55])}…</code>\n"
+            "• Undan keyin siz qo'lda javob yozguningizcha jim.\n\n"
+            "<code>/reply on</code> · <code>/reply off</code>"
+        )
+
+    async def cmd_reply(self, message: Any, args: List[str]) -> None:
+        st = self.store
+        if not args or args[0].lower() not in {"on", "off"}:
+            await self.say(self._reply_text())
+            return
+        st.reply_enabled = args[0].lower() == "on"
+        st.touch()
+        self.engine.cancel_all("modul B holati o'zgardi")
+        await self.say(f"💬 Modul B (Auto-Reply) {'✅ yoqildi' if st.reply_enabled else '⛔ o`chirildi'}.\n\n🔀 {self._combo_text()}")
+
+    async def cmd_contacts(self, message: Any, args: List[str]) -> None:
+        st = self.store
+        if not args or args[0].lower() not in {"on", "off"}:
+            await self.say(
+                f"👥 <code>/mode all</code> da kontaktlar: <b>{'qamrab olinadi' if st.include_contacts else 'o`tkazib yuboriladi'}</b>\n"
+                "<code>/contacts on</code> · <code>/contacts off</code>"
+            )
+            return
+        st.include_contacts = args[0].lower() == "on"
+        st.touch()
+        await self.say(f"👥 Kontaktlar <code>all</code> rejimida: <b>{'qamrab olinadi' if st.include_contacts else 'o`tkazib yuboriladi'}</b>")
 
     # ---- hayot sikli ------------------------------------------------------------
     async def _start_client(self) -> None:
@@ -1731,8 +1997,8 @@ class UserbotApp:
         if Config.STARTUP_NOTICE:
             await self.say(
                 "🟢 <b>Userbot ishga tushdi.</b>\n"
-                f"Avto-javob: {'yoqilgan' if self.store.enabled else 'o`chirilgan'} · "
-                f"rejim: <b>{self.store.mode}</b> · tanlanganlar: <b>{len(self.store.selected)}</b>\n"
+                f"{self._modules_block()}\n"
+                f"Rejim: <b>{self.store.mode}</b> · tanlanganlar: <b>{len(self.store.selected)}</b>\n"
                 "Yordam: <code>/help</code>"
             )
 
